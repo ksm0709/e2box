@@ -5,9 +5,8 @@
  * 주의 : RTS/CTS 를 제어하지 않는다.
  * 시리얼포트를 열고 이전의 포트설정상태를 저장하지 않았다.
  * */
-int open_serial( char *dev_name, int baud, int vtime, int vmin )
+bool Serial::Open( char *dev_name, int baud, int vtime, int vmin )
 {
-	int fd;
 	struct termios newtio;
 
 	// 시리얼포트를 연다.
@@ -19,7 +18,7 @@ int open_serial( char *dev_name, int baud, int vtime, int vmin )
 	{
 		// 화일 열기 실패
 		printf( "Device OPEN FAIL %s\n", dev_name );
-		return -1;
+		return false;
 	}
 
 	// 시리얼 포트 환경을 설정한다.
@@ -70,13 +69,109 @@ int open_serial( char *dev_name, int baud, int vtime, int vmin )
 	tcflush ( fd, TCIFLUSH );
 	tcsetattr( fd, TCSANOW, &newtio );
 
-	return fd;
+	return true;
 }
 
 /*
    설명 : 시리얼포트를 닫는다.
    */
-void close_serial( int fd )
+void Serial::Close()
 {
 	close( fd );
 } 
+
+
+void Serial::setHeader(int byte_header_, char* header_)
+{
+	byte_header = byte_header_;
+
+	header = new char[byte_header];
+	memcpy(header, header_, byte_header);
+}
+
+bool Serial::readPacket(char* buf, int size)
+{
+	int dwRead;
+	char* buf_header = new char[byte_header];
+
+	int err_cnt = 0;
+
+	while(1)
+	{
+		dwRead = read(fd, &vecRead[0], size);
+
+		if( dwRead <= 0 )
+		{
+			// ERROR: Time out
+			err_cnt++;
+
+			if( err_cnt >= ERROR_THRESHOLD )
+			{
+				return false;
+			}
+		}
+		else if( dwRead == 1 )
+		{
+			vecBuf.push_back( vecRead[0] );	
+		}
+		else
+		{
+			vecBuf.insert( vecBuf.end(), vecRead.begin(), vecRead.begin() + dwRead ); 
+		}
+
+		while( vecBuf.size() >= size + byte_header )
+		{
+			if( byte_header == 0 )
+			{
+				memcpy(buf, &vecBuf[0], size);	
+				freq_cnt++;
+				return true;
+			}
+
+			memcpy( buf_header, &vecBuf[0], byte_header );
+
+			if( memcmp( buf_header, header, byte_header ) == 0  )
+			{
+				memcpy( buf, &vecBuf[byte_header], size );
+				vecBuf.erase( vecBuf.begin() , vecBuf.begin() + size + byte_header ); 
+
+				freq_cnt++;
+				return true;
+			}
+			else
+			{
+				// ERROR : Packet Missmatch
+				vecBuf.erase( vecBuf.begin(), vecBuf.begin() + byte_header );	
+				err_cnt++;
+
+				if( err_cnt >= ERROR_THRESHOLD )
+				{
+					return false;
+				}
+			}
+		}
+	}	
+
+	return false;
+}
+
+bool Serial::writePacket(char* buf, int size)
+{
+	char* buf_write = new char[size + byte_header];
+
+	memcpy( buf_write, header, byte_header );
+	memcpy( buf_write + byte_header, buf, size );
+
+	return write( fd, buf_write, size + byte_header );
+}
+
+
+int Serial::readNormal(char* buf, int size)
+{
+	return read( fd, buf, size );
+}
+
+int Serial::writeNormal(char *buf, int size)
+{
+	return write( fd, buf, size );
+}
